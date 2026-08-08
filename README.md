@@ -6,13 +6,13 @@ This server handles parcel-related API requests and stores application data in M
 
 ## 🛠️ Technologies Used
 
-* Node.js
-* Express.js
-* MongoDB
-* MongoDB Node.js Driver
-* CORS
-* dotenv
-* Nodemon
+- Node.js
+- Express.js
+- MongoDB
+- MongoDB Node.js Driver
+- CORS
+- dotenv
+- Nodemon
 
 ## 📁 Project Structure
 
@@ -28,20 +28,20 @@ zap-shift-server/
 
 ## ⚙️ Features
 
-* Express.js server setup
-* MongoDB Atlas integration
-* CORS configuration
-* JSON request body handling
-* Parcel creation API
-* Environment variable configuration
-* Nodemon development setup
+- Express.js server setup
+- MongoDB Atlas integration
+- CORS configuration
+- JSON request body handling
+- Parcel creation API
+- Environment variable configuration
+- Nodemon development setup
 
 ## 🚀 Getting Started
 
 ### 1. Clone the repository
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_URL
+git clone https://github.com/anik665/zap_shift_server
 ```
 
 ### 2. Go to the project directory
@@ -152,9 +152,9 @@ The following environment variables are required:
 
 You can test the API using:
 
-* Thunder Client
-* Postman
-* Insomnia
+- Thunder Client
+- Postman
+- Insomnia
 
 Example:
 
@@ -179,13 +179,13 @@ The backend is currently under development.
 
 Upcoming features may include:
 
-* User management
-* Authentication
-* Parcel tracking
-* Booking management
-* Payment integration
-* Delivery status management
-* Admin APIs
+- User management
+- Authentication
+- Parcel tracking
+- Booking management
+- Payment integration
+- Delivery status management
+- Admin APIs
 
 ## 👨‍💻 Developer
 
