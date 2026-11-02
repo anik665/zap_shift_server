@@ -69,7 +69,67 @@ async function run() {
     await client.connect();
     const db = client.db("zap_shift_db");
     const parcelsCollections = db.collection("parcel");
+    const usersCollections = db.collection("users");
     const paymentsCollections = db.collection("payments");
+    const riderCollections = db.collection("riders");
+
+    //user api
+
+    app.post("/users", async (req, res) => {
+      try {
+        const user = req.body;
+        const email = user.email;
+
+        // 1. Check if the user already exists in the database
+        const userExist = await usersCollections.findOne({ email });
+
+        if (userExist) {
+          return res.status(200).send({
+            exists: true,
+            message: "User already exists in the database.",
+          });
+        }
+
+        // 2. Assign default role and account creation timestamp for new users
+        user.role = "user";
+        user.createdAt = new Date();
+
+        // 3. Insert the new user document into the collection
+        const result = await usersCollections.insertOne(user);
+
+        // 4. Send success response back to the client
+        res.status(201).send({
+          exists: false,
+          insertedId: result.insertedId,
+          message: "User added successfully.",
+        });
+      } catch (error) {
+        console.error("Database error while processing user:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
+    //Rider api
+    app.post("/rider", async (req, res) => {
+      const rider = req.body;
+      rider.starus = "pending";
+      rider.createdAt = new Date().toLocaleString();
+      const result = await riderCollections.insertOne(rider);
+      res.send(result);
+    });
+
+    //Rider Gets api
+    app.get("/rider", async (req, res) => {
+      const query = {};
+      if (rider.query.status) {
+        query.status = rider.query.status;
+      }
+      const option = { sort: { createdAt: -1 } };
+      const cursor = await riderCollections.find(query, option).toArray();
+      res.send(cursor);
+    });
 
     // parcels api
 
