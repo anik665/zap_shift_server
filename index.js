@@ -114,7 +114,7 @@ async function run() {
     //Rider api
     app.post("/rider", async (req, res) => {
       const rider = req.body;
-      rider.starus = "pending";
+      rider.status = "pending";
       rider.createdAt = new Date().toLocaleString();
       const result = await riderCollections.insertOne(rider);
       res.send(result);
@@ -123,12 +123,28 @@ async function run() {
     //Rider Gets api
     app.get("/rider", async (req, res) => {
       const query = {};
-      if (rider.query.status) {
-        query.status = rider.query.status;
+      if (req.query.status) {
+        query.status = req.query.status;
       }
       const option = { sort: { createdAt: -1 } };
       const cursor = await riderCollections.find(query, option).toArray();
       res.send(cursor);
+    });
+
+    //rider status update api
+
+    app.patch("/rider/:id", async (req, res) => {
+      const id = req.params.id;
+      const status = req.body.status;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          status: status,
+        },
+      };
+
+      const result = await riderCollections.updateOne(query, updateDoc);
+      res.send(result);
     });
 
     // parcels api
