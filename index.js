@@ -72,6 +72,38 @@ async function run() {
     const usersCollections = db.collection("users");
     const paymentsCollections = db.collection("payments");
     const riderCollections = db.collection("riders");
+    const trackingCollections = db.collection("tracking");
+
+    const verifyAdmin = async (req, res, next) => {
+      const user = await usersCollections.findOne({ email: req.decodeEmail });
+      if (!user || user.role !== "admin") {
+        return res
+          .status(403)
+          .send({ success: false, message: "Forbidden access" });
+      }
+      next();
+    };
+
+    const verifyRider = async (req, res, next) => {
+      const user = await usersCollections.findOne({ email: req.decodeEmail });
+      if (!user || user.role !== "rider") {
+        return res
+          .status(403)
+          .send({ success: false, message: "Forbidden access" });
+      }
+      next();
+    };
+
+    const trackingLog = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        deliveris: status.split("-").join(" "),
+        createdAt: new Date(),
+      };
+      const result = await trackingCollections.insertOne(log);
+      return result;
+    };
 
     //user api
 
@@ -111,6 +143,72 @@ async function run() {
       }
     });
 
+    // Get all users
+    app.get("/users", verifyToken, async (req, res) => {
+      try {
+        const result = await usersCollections.find().toArray();
+        res.status(200).send(result);
+      } catch (error) {
+        console.error("Database error while fetching users:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
+    // Get role by email (useRole hook)
+    app.get("/users/:email/role", verifyToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+        if (email !== req.decodeEmail) {
+          return res
+            .status(403)
+            .send({ success: false, message: "Forbidden access" });
+        }
+        const user = await usersCollections.findOne({ email });
+        res.send({ role: user?.role || "user" });
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
+    // Role update
+    app.patch("/users/role/:id", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { role } = req.body;
+        if (!["user", "rider", "admin"].includes(role)) {
+          return res
+            .status(400)
+            .send({ success: false, message: "Invalid role" });
+        }
+        const result = await usersCollections.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { role } },
+        );
+        res.send(result); // modifiedCount frontend এ লাগবে
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
+    // Delete user
+    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await usersCollections.deleteOne({
+          _id: new ObjectId(req.params.id),
+        });
+        res.send(result); // deletedCount frontend এ লাগবে
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
+
     //Rider api
     app.post("/rider", async (req, res) => {
       const rider = req.body;
@@ -123,9 +221,24 @@ async function run() {
     //Rider Gets api
     app.get("/rider", async (req, res) => {
       const query = {};
+
       if (req.query.status) {
-        query.status = req.query.status;
+        query.status = {
+          $regex: `^${req.query.status.trim()}$`,
+          $options: "i",
+        };
       }
+
+      if (req.query.district) {
+        const escaped = req.query.district
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        query.riderDistrict = {
+          $regex: `^\\s*${escaped}\\s*$`,
+          $options: "i",
+        };
+      }
+
       const option = { sort: { createdAt: -1 } };
       const cursor = await riderCollections.find(query, option).toArray();
       res.send(cursor);
@@ -133,7 +246,7 @@ async function run() {
 
     //rider status update api
 
-    app.patch("/rider/:id", async (req, res) => {
+    app.patch("/rider/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const status = req.body.status;
       const query = { _id: new ObjectId(id) };
@@ -143,9 +256,104 @@ async function run() {
         },
       };
 
+      if (status === "approved") {
+        const email = req.body.email;
+        const useQuery = { email };
+        const updateUser = { $set: { role: "rider" } };
+        const userResult = await usersCollections.updateOne(
+          useQuery,
+          updateUser,
+        );
+      }
+
       const result = await riderCollections.updateOne(query, updateDoc);
       res.send(result);
     });
+
+    // Rider actions: accept | reject | pickup | deliver
+    app.patch(
+      "/parcel/:id/rider-action",
+      verifyToken,
+      verifyRider,
+      async (req, res) => {
+        try {
+          const { action, trackingId } = req.body;
+
+          const flow = {
+            accept: {
+              from: "rider-assigned",
+              update: {
+                $set: {
+                  deliveryStatus: "rider-accepted",
+                  acceptedAt: new Date(),
+                },
+              },
+            },
+            reject: {
+              from: "rider-assigned",
+              update: {
+                $unset: {
+                  riderId: "",
+                  riderName: "",
+                  riderEmail: "",
+                  assignedAt: "",
+                  deliveryStatus: "",
+                },
+              },
+            },
+            pickup: {
+              from: "rider-accepted",
+              update: {
+                $set: { deliveryStatus: "picked-up", pickedUpAt: new Date() },
+              },
+            },
+            deliver: {
+              from: "picked-up",
+              update: {
+                $set: { deliveryStatus: "delivered", deliveredAt: new Date() },
+              },
+            },
+          };
+
+          const step = flow[action];
+          if (!step) {
+            return res
+              .status(400)
+              .send({ success: false, message: "Invalid action" });
+          }
+
+          // শুধু নিজের parcel, আর সঠিক status order হলেই update হবে
+          const result = await parcelsCollections.updateOne(
+            {
+              _id: new ObjectId(req.params.id),
+              riderEmail: req.decodeEmail,
+              deliveryStatus: step.from,
+            },
+            step.update,
+          );
+
+          if (
+            result.modifiedCount > 0 &&
+            (action === "reject" || action === "deliver")
+          ) {
+            await riderCollections.updateOne(
+              { riderEmail: req.decodeEmail },
+              { $set: { workStatus: "available" } },
+            );
+          }
+          trackingLog(
+            trackingId,
+            (deliveryStatus = step.update.$set.deliveryStatus),
+          );
+
+          res.send(result);
+        } catch (error) {
+          res
+            .status(500)
+            .send({ success: false, message: "Internal Server Error" });
+        }
+      },
+    );
 
     // parcels api
 
@@ -167,6 +375,127 @@ async function run() {
       const cursor = await parcelsCollections.find(query, option).toArray();
       res.send(cursor);
     });
+
+    // Paid parcels that have no rider yet (admin only)
+    app.get(
+      "/parcels/unassigned",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const result = await parcelsCollections
+            .find({ paymentStatus: "paid", riderEmail: { $exists: false } })
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.send(result);
+        } catch (error) {
+          res
+            .status(500)
+            .send({ success: false, message: "Internal Server Error" });
+        }
+      },
+    );
+
+    app.get("/parcel/rider", verifyToken, async (req, res) => {
+      try {
+        const { riderEmail, deliveryStatus } = req.query;
+
+        if (riderEmail !== req.decodeEmail) {
+          return res
+            .status(403)
+            .send({ success: false, message: "Forbidden access" });
+        }
+
+        const query = { riderEmail };
+        if (deliveryStatus) {
+          query.deliveryStatus = deliveryStatus;
+        }
+
+        const result = await parcelsCollections
+          .find(query)
+          .sort({ assignedAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
+    app.get("/parcel/delivery-status/stat", async (req, res) => {
+      const pipeline = [
+        {
+          $group: {
+            _id: "$deliveryStatus",
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            status: "$_id",
+            count: 1,
+          },
+        },
+      ];
+      const result = await parcelsCollections.aggregate(pipeline).toArray();
+      res.send(result);
+    });
+
+    //tracking log api
+    app.get("/tracking/:trackingId/log", async (req, res) => {
+      const trackingId = req.params.trackingId;
+      const result = await trackingCollections.find({ trackingId }).toArray();
+      res.send(result);
+    });
+
+    // Assign rider to parcel (admin only)
+    app.patch(
+      "/parcel/:id/assign",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { riderId, riderName, riderEmail, trackingId } = req.body;
+          if (!riderId || !riderEmail) {
+            return res
+              .status(400)
+              .send({ success: false, message: "Rider info required" });
+          }
+
+          // riderEmail $exists: false দিলে একই parcel দুইবার assign হবে না
+          const result = await parcelsCollections.updateOne(
+            {
+              _id: new ObjectId(req.params.id),
+              riderEmail: { $exists: false },
+            },
+            {
+              $set: {
+                deliveryStatus: "rider-assigned",
+                riderId,
+                riderName,
+                riderEmail,
+                assignedAt: new Date(),
+              },
+            },
+          );
+
+          if (result.modifiedCount > 0) {
+            await riderCollections.updateOne(
+              { _id: new ObjectId(riderId) },
+              { $set: { workStatus: "in-delivery" } },
+            );
+          }
+          trackingLog(trackingId, (deliveryStatus = "rider-assigned"));
+
+          res.send(result);
+        } catch (error) {
+          res
+            .status(500)
+            .send({ success: false, message: "Internal Server Error" });
+        }
+      },
+    );
+
     // for payment status update
 
     app.get("/payment/:id", async (req, res) => {
@@ -189,7 +518,7 @@ async function run() {
     app.post("/payment-cheakout-session", async (req, res) => {
       const { paymentInfo } = req.body;
 
-      // ১. যদি ফ্রন্টএন্ড থেকে নাম বা ঠিকানা মিসিং থাকে, তবে সরাসরি ডাটাবেজ থেকে পার্সেল এনে ব্যাকএন্ডেই ফিলাপ করে নিন
+      // retrieve recipient info from parcel if not provided in paymentInfo
       let recipientName = paymentInfo.recipientName;
       let recipientPhone = paymentInfo.recipientPhone;
       let recipientAddress = paymentInfo.recipientAddress;
@@ -295,8 +624,10 @@ async function run() {
           $set: {
             paymentStatus: "paid",
             trackingId: trackingId,
+            deliveryStatus: "pending",
           },
         };
+        trackingLog(trackingId, (deliveryStatus = "pending"));
         const result = await parcelsCollections.updateOne(query, updateDoc);
 
         // ৩. পেমেন্ট রেকর্ড ইতিমধ্যেই তৈরি করা হয়েছে কিনা চেক করুন (Duplicate предотвратить করতে)
