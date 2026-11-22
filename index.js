@@ -26,6 +26,7 @@ const generateTrackingId = () => {
 };
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { format } = require("path");
 
 // middlewere
 app.use(express.json());
@@ -354,6 +355,55 @@ async function run() {
         }
       },
     );
+
+    //RIder delivery starus per day stat
+    app.get("/rider/delivery-status/per-day-stat", async (req, res) => {
+      try {
+        const email = req.query.email;
+        const pipeline = [
+          {
+            $match: { riderEmail: email, deliveryStatus: "delivered" },
+          },
+          {
+            $lookup: {
+              from: "tracking",
+              localField: "trackingId",
+              foreignField: "trackingId",
+              as: "parcel_traking",
+            },
+          },
+          {
+            $unwind: "$parcel_traking",
+          },
+          {
+            $match: { "parcel_traking.status": "delivered" },
+          },
+          {
+            $addFields: {
+              deliveryday: {
+                $dateToString: {
+                  format: "%Y-%m-%d",
+                  date: "$parcel_traking.createdAt",
+                },
+              },
+            },
+          },
+          {
+            $group: {
+              _id: "$deliveryday",
+              deliveryCount: { $sum: 1 },
+            },
+          },
+        ];
+
+        const result = await parcelsCollections.aggregate(pipeline).toArray();
+        res.send(result);
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
 
     // parcels api
 
